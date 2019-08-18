@@ -1,6 +1,6 @@
 ## Current state
 - Currently being tested with integer types as they are all passed by value. 
-- Has been tested with 50k rows for integer and bigint; 32k rows for smallint.  (more test data soon.) 
+- Has been tested with 50k rows for integer and bigint; 32k rows for smallint.  (more tests, and test data soon.) 
 
 
 ## What's working: 
