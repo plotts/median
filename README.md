@@ -1,10 +1,10 @@
 ## Current state
-- Currently being tested with integer types as they are all passed by value, and as Datum which is uintptr_t. 
+- Currently being tested with integer types as they are all passed by value. 
 - Has been tested with 50k rows for integer and bigint; 32k rows for smallint.  (more test data soon.) 
 
 
 ## What's working: 
-These SQL examples "work".   :)
+Given the data type restrictions, above, these SQL examples "work".   :)
  
 Vanilla:
 ```sql
