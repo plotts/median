@@ -1,37 +1,19 @@
-# Coding assignment: Median aggregate
-
-The task of this coding assignment is to implement an aggregate
-function that calculates the *median* over an input set (typically
-values from a table). Documentation on how to create aggregates can be
-found in the official PostgreSQL documentation under [User-defined
-Aggregates](https://www.postgresql.org/docs/current/static/xaggr.html)
+## Current state
+- Currently works with integer types as they are all passed by value). 
+- Has been tested with 50k rows, integer and bigint.  (more test data soon.) 
 
 
-A typical median query is:
-
+## What's working: 
+These SQL examples "work".   :) 
 ```sql
-SELECT median(temp) FROM conditions;
+SELECT id, temp, median(temp) FROM newtable;
+```
+or a windowing function like: 
+```sql 
+SELECT id, temp, median(temp) OVER (ROWS BETWEEN 4 PRECEDING AND CURRENT ROW) FROM newtable;
 ```
 
-## Compiling and installing
-
-To compile and install the extension:
-
-```bash
-> make
-> make install
-```
-
-Note, that depending on installation location, installing the
-extension might require super-user permissions.
-
-## Testing
-
-Tests can be run with
-
-```bash
-> make installcheck
-```
-
-A few tests are provided with the coding assignment. All of these
-tests should pass as is. Feel free to add additional tests.
+## What's not working. 
+- Polymorphic types, including the pass-by-reference types.  Depending on platform, this might include DOUBLE, possibly NUMBER. 
+- Parallelism.  need to learn more about this.  The idea of median seems like we need all the data from all partitions, sorted in order to select the median.  
+- Need more tests.
