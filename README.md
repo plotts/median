@@ -1,14 +1,16 @@
 ## Current state
-- Currently works with integer types as they are all passed by value). 
+- Currently being tested with integer types as they are all passed by value, and as Datum which is uintptr_t. 
 - Has been tested with 50k rows, integer and bigint.  (more test data soon.) 
 
 
 ## What's working: 
-These SQL examples "work".   :) 
+These SQL examples "work".   :)
+ 
+Vanilla:
 ```sql
 SELECT id, temp, median(temp) FROM newtable;
 ```
-or a windowing function like: 
+Or a windowing function like: 
 ```sql 
 SELECT id, temp, median(temp) OVER (ROWS BETWEEN 4 PRECEDING AND CURRENT ROW) FROM newtable;
 ```

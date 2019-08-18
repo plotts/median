@@ -2,7 +2,6 @@ MODULE_big = median
 EXTENSION = median
 DATA = median--1.0.sql
 DOCS = README.md
-#CFLAGS=-g -ansi
 EXTRA_CLEAN = *~ median.tar.gz
 REGRESS := median
 PG_USER = postgres

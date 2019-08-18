@@ -8,23 +8,19 @@
 PG_MODULE_MAGIC;
 #endif
 
-typedef struct MyNode {
-    Datum datum;
-} MY_NODE;
-typedef struct MyNode * MY_NODE_P;
-
 typedef struct AllData {
     int numNodes;
     int count;
-    struct MyNode *nodes;
+    Datum *data;
 } ALLDATA;
 
-typedef struct AllData * ALLDATA_P;
+typedef struct AllData *ALLDATA_P;
 
 ALLDATA_P allData;
 
-int compare_datum(const void *p, const void *q);
-#define NUM_NODES 10000
+int compare_data(const void *p, const void *q);
+
+#define NUM_NODES 10
 
 PG_FUNCTION_INFO_V1(median_transfn);
 
@@ -36,8 +32,7 @@ PG_FUNCTION_INFO_V1(median_transfn);
  * initialized.
  */
 Datum
-median_transfn(PG_FUNCTION_ARGS)
-{
+median_transfn(PG_FUNCTION_ARGS) {
     Oid datum_type = get_fn_expr_argtype(fcinfo->flinfo, 0);
     MemoryContext agg_context;
     Datum datum;
@@ -50,16 +45,15 @@ median_transfn(PG_FUNCTION_ARGS)
         elog(ERROR, "median_transfn called in non-aggregate context");
     }
 
-    allData = (ALLDATA_P)(PG_ARGISNULL(0) ? NULL : PG_GETARG_POINTER(0));
-    if (allData == NULL)
-    {
+    allData = (ALLDATA_P) (PG_ARGISNULL(0) ? NULL : PG_GETARG_POINTER(0));
+    if (allData == NULL) {
 
-        if((allData = MemoryContextAllocZero(agg_context, sizeof(ALLDATA))) == NULL) {
+        if ((allData = MemoryContextAllocZero(agg_context, sizeof(ALLDATA))) == NULL) {
             elog(ERROR, "can\'t allocate allData struct");
         }
 
-        if((allData->nodes = MemoryContextAllocZero(agg_context, NUM_NODES * sizeof(MY_NODE))) == NULL) {
-            elog(ERROR, "can\'t allocate allData->nodes struct");
+        if ((allData->data = MemoryContextAllocZero(agg_context, NUM_NODES * sizeof(Datum))) == NULL) {
+            elog(ERROR, "can\'t allocate allData->data struct");
         }
 
         allData->numNodes = NUM_NODES;
@@ -67,21 +61,18 @@ median_transfn(PG_FUNCTION_ARGS)
     }
 
     // TODO:  should NULLs be included as 0s?  or ignored?
-    if (PG_ARGISNULL(1))
-    {
+    if (PG_ARGISNULL(1)) {
         elog(ERROR, "null Datum");
     } else {
-        datum = PG_GETARG_INT32(1);
-        allData->nodes[allData->count].datum = datum;
+        datum = PG_GETARG_INT64(1);
+        allData->data[allData->count] = datum;
         allData->count++;
     }
 
-    if(allData->count == allData->numNodes)
-    {
-        allData->numNodes = allData->count * 2;
-        fprintf(stderr, "doubled to size %ld\n", allData->numNodes *sizeof(MY_NODE));
+    if (allData->count == allData->numNodes) {
+r        allData->numNodes = allData->count * 2;
         // TODO: does this need a null check?
-        allData->nodes = (MY_NODE_P)repalloc_huge(allData->nodes, allData->numNodes * sizeof(MY_NODE));
+        allData->data = (Datum *) repalloc_huge(allData->data, allData->numNodes * sizeof(Datum));
     }
 
     PG_RETURN_POINTER(allData);
@@ -98,48 +89,42 @@ PG_FUNCTION_INFO_V1(median_finalfn);
  * post processing and clean up any temporary state.
  */
 Datum
-median_finalfn(PG_FUNCTION_ARGS)
-{
+median_finalfn(PG_FUNCTION_ARGS) {
     MemoryContext agg_context;
     int32 myMean = 0;
 
     allData = (ALLDATA *) (PG_ARGISNULL(0) ? NULL : PG_GETARG_POINTER(0));
 
-    if (!AggCheckCallContext(fcinfo, &agg_context))
-    {
+    if (!AggCheckCallContext(fcinfo, &agg_context)) {
         elog(ERROR, "median_finalfn called in non-aggregate context");
     }
 
-    if(allData == NULL)
-    {
+    if (allData == NULL) {
         elog(ERROR, "allData is NULL - fatal error.");
     }
 
-    if(allData->count == 0)
-    {
+    if (allData->count == 0) {
         elog(ERROR, "allData count is 0 - fatal error.");
     }
 
-    qsort(allData->nodes, allData->count-1, sizeof(MY_NODE), compare_datum);
+    qsort(allData->data, allData->count - 1, sizeof(Datum), compare_data);
 
-    if(allData->count % 2 == 1)
-    {
+    if (allData->count % 2 == 1) {
         // odd number of data items.
-        myMean = allData->nodes[allData->count/2].datum;
+        myMean = allData->data[allData->count / 2];
     } else {
         // even number of data items.
-        myMean = (allData->nodes[allData->count/2-1].datum + allData->nodes[allData->count/2].datum) / 2;
+        myMean = (allData->data[allData->count / 2 - 1] + allData->data[allData->count / 2]) / 2;
     }
 
     PG_RETURN_INT32(myMean);
 }
 
-int compare_datum(const void *p, const void *q) {
-    long unsigned int x = ((MY_NODE_P)p)->datum;
-    long unsigned int y = ((MY_NODE_P)q)->datum;
+int compare_data(const void *p, const void *q) {
+    Datum x = *(const Datum *) p;
+    Datum y = *(const Datum *) q;
 
-    if (x < y)
-    {
+    if (x < y) {
         return -1;
     } else if (x > y) {
         return 1;
