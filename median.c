@@ -64,13 +64,13 @@ median_transfn(PG_FUNCTION_ARGS) {
     if (PG_ARGISNULL(1)) {
         elog(ERROR, "null Datum");
     } else {
-        datum = PG_GETARG_INT64(1);
+        datum = PG_GETARG_DATUM(1);
         allData->data[allData->count] = datum;
         allData->count++;
     }
 
     if (allData->count == allData->numNodes) {
-r        allData->numNodes = allData->count * 2;
+        allData->numNodes = allData->count * 2;
         // TODO: does this need a null check?
         allData->data = (Datum *) repalloc_huge(allData->data, allData->numNodes * sizeof(Datum));
     }
@@ -91,7 +91,7 @@ PG_FUNCTION_INFO_V1(median_finalfn);
 Datum
 median_finalfn(PG_FUNCTION_ARGS) {
     MemoryContext agg_context;
-    int32 myMean = 0;
+    Datum median = 0;
 
     allData = (ALLDATA *) (PG_ARGISNULL(0) ? NULL : PG_GETARG_POINTER(0));
 
@@ -111,13 +111,13 @@ median_finalfn(PG_FUNCTION_ARGS) {
 
     if (allData->count % 2 == 1) {
         // odd number of data items.
-        myMean = allData->data[allData->count / 2];
+        median = allData->data[allData->count / 2];
     } else {
         // even number of data items.
-        myMean = (allData->data[allData->count / 2 - 1] + allData->data[allData->count / 2]) / 2;
+        median = (allData->data[allData->count / 2 - 1] + allData->data[allData->count / 2]) / 2;
     }
 
-    PG_RETURN_INT32(myMean);
+    PG_RETURN_DATUM(median);
 }
 
 int compare_data(const void *p, const void *q) {
