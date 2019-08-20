@@ -1,5 +1,4 @@
 #include <postgres.h>
-#include <utils/lsyscache.h>
 #include <fmgr.h>
 #include <stdio.h>
 #include <string.h>
@@ -9,7 +8,7 @@ PG_MODULE_MAGIC;
 #endif
 
 typedef struct AllData {
-    int numNodes;
+    int total_nodes;
     int count;
     Datum *data;
 } ALLDATA;
@@ -26,6 +25,7 @@ PG_FUNCTION_INFO_V1(median_transfn);
 
 /*
  * Median state transfer function.
+ *
  *
  * This function is called for every value in the set that we are calculating
  * the median for. On first call, the aggregate state, if any, needs to be
@@ -44,10 +44,11 @@ median_transfn(PG_FUNCTION_ARGS) {
     if (!AggCheckCallContext(fcinfo, &agg_context)) {
         elog(ERROR, "median_transfn called in non-aggregate context");
     }
+    MemoryContextSwitchTo(agg_context);
 
     allData = (ALLDATA_P) (PG_ARGISNULL(0) ? NULL : PG_GETARG_POINTER(0));
     if (allData == NULL) {
-
+        // first time.
         if ((allData = MemoryContextAllocZero(agg_context, sizeof(ALLDATA))) == NULL) {
             elog(ERROR, "can\'t allocate allData struct");
         }
@@ -56,28 +57,34 @@ median_transfn(PG_FUNCTION_ARGS) {
             elog(ERROR, "can\'t allocate allData->data struct");
         }
 
-        allData->numNodes = NUM_NODES;
+        allData->total_nodes = NUM_NODES;
         allData->count = 0;
     }
 
-    // TODO:  should NULLs be included as 0s?  or ignored?
     if (PG_ARGISNULL(1)) {
-        elog(ERROR, "null Datum");
+        PG_RETURN_POINTER(agg_context);
+
     } else {
         datum = PG_GETARG_DATUM(1);
         allData->data[allData->count] = datum;
         allData->count++;
     }
 
-    if (allData->count == allData->numNodes) {
-        allData->numNodes = allData->count * 2;
+    if (allData->count == allData->total_nodes) {
+        allData->total_nodes = allData->count * 2;
+
+        // TODO: delete debugging code.
+        fprintf(stderr, "doubling to %d Datum\n", allData->total_nodes);
+
         // TODO: does this need a null check?
-        allData->data = (Datum *) repalloc_huge(allData->data, allData->numNodes * sizeof(Datum));
+        allData->data = (Datum *) repalloc_huge(allData->data, allData->total_nodes * sizeof(Datum));
+        if(allData->data == NULL) {
+            elog(ERROR, "repalloc_huge() failed.");
+        }
     }
 
     PG_RETURN_POINTER(allData);
 }
-
 
 PG_FUNCTION_INFO_V1(median_finalfn);
 
@@ -98,9 +105,10 @@ median_finalfn(PG_FUNCTION_ARGS) {
     if (!AggCheckCallContext(fcinfo, &agg_context)) {
         elog(ERROR, "median_finalfn called in non-aggregate context");
     }
+    MemoryContextSwitchTo(agg_context);
 
     if (allData == NULL) {
-        elog(ERROR, "allData is NULL - fatal error.");
+        PG_RETURN_DATUM((Datum)NULL);
     }
 
     if (allData->count == 0) {
@@ -110,11 +118,13 @@ median_finalfn(PG_FUNCTION_ARGS) {
     qsort(allData->data, allData->count - 1, sizeof(Datum), compare_data);
 
     if (allData->count % 2 == 1) {
-        // odd number of data items.
+        // Odd number of data items.
         median = allData->data[allData->count / 2];
     } else {
-        // even number of data items.
-        median = (allData->data[allData->count / 2 - 1] + allData->data[allData->count / 2]) / 2;
+        // Even number of data items.
+        // Return the lower of the pair.  Don't average, as this
+        // will not be supported for some data types.
+        median = allData->data[allData->count / 2 - 1];
     }
 
     PG_RETURN_DATUM(median);
