@@ -164,6 +164,7 @@ select_comparator(void)
             return compare_doubles;
 
         case VARCHAROID:
+        case TEXTOID:
             return compare_varchars;
 
         case TIMESTAMPOID:
@@ -171,8 +172,8 @@ select_comparator(void)
             return compare_timestamps;
 
         default:
-            elog(LOG, "select_comparator unknown data type %d", allData->type);
-            return compare_ints;
+            elog(ERROR, "select_comparator unknown data type %d", allData->type);
+            break;
     }
 }
 
@@ -224,7 +225,7 @@ compare_varchars(const void *p, const void *q) {
     int len_y = VARSIZE(y)-VARHDRSZ;
     int rval = strncmp(VARDATA(x), VARDATA(y), MIN(len_x, len_y));
 
-    if(rval == 0) {  // matched
+    if(rval == 0) {  // matched  all characters, but bob != bobby
         if(len_x < len_y) {
             return -1;
         } else if(len_x > len_y) {
@@ -233,7 +234,7 @@ compare_varchars(const void *p, const void *q) {
             return 0;
         }
     } else {
-        return 0;
+        return rval;
     }
 }
 
