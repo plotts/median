@@ -1,7 +1,8 @@
 #include <postgres.h>
 #include <fmgr.h>
 #include <catalog/pg_type.h>
-#include "utils/lsyscache.h"
+#include <utils/timestamp.h>
+#include <utils/lsyscache.h>
 
 #ifdef PG_MODULE_MAGIC
 PG_MODULE_MAGIC;
@@ -21,12 +22,14 @@ typedef struct AllData {
 typedef struct AllData *ALLDATA_P;
 ALLDATA_P allData;
 
-typedef int (*comparator)(const void *, const void *);
 int compare_original(const void *p, const void *q);
 int compare_ints(const void *p, const void *q);
 int compare_floats(const void *p, const void *q);
 int compare_doubles(const void *p, const void *q);
 int compare_varchars(const void *p, const void *q);
+int compare_timestamps(const void *p, const void *q);
+
+typedef int (*comparator)(const void *, const void *);
 comparator select_comparator(void);
 
 #define NUM_NODES 100
@@ -79,7 +82,7 @@ median_transfn(PG_FUNCTION_ARGS) {
 
     // check here for a null datum.
     if (PG_ARGISNULL(1)) {
-        PG_RETURN_POINTER(agg_context);
+        PG_RETURN_POINTER(allData);
     }
 
     datum = PG_GETARG_DATUM(1);
@@ -112,7 +115,6 @@ Datum
 median_finalfn(PG_FUNCTION_ARGS) {
     MemoryContext agg_context;
     Datum median = 0;
-    comparator x;
 
     if (!AggCheckCallContext(fcinfo, &agg_context)) {
         elog(ERROR, "median_finalfn called in non-aggregate context");
@@ -130,8 +132,7 @@ median_finalfn(PG_FUNCTION_ARGS) {
         PG_RETURN_DATUM((Datum)NULL);
     }
 
-    x = select_comparator();
-    qsort(allData->data, allData->count - 1, sizeof(Datum), x);
+    qsort(allData->data, allData->count, sizeof(Datum), select_comparator());
 
     if (allData->count % 2 == 1) {
         // Odd number of data items.
@@ -140,7 +141,7 @@ median_finalfn(PG_FUNCTION_ARGS) {
         // Even number of data items.
         // Return the lower of the pair.  Don't average, as this
         // will not be supported for some data types.
-        median = allData->data[allData->count / 2 - 1];
+        median = allData->data[allData->count / 2 -1];
     }
 
     PG_RETURN_DATUM(median);
@@ -154,43 +155,28 @@ select_comparator(void)
         case INT2OID:
         case INT4OID:
         case INT8OID:
-            fprintf(stderr,"select_comparator: integer\n");
             return compare_ints;
 
         case FLOAT4OID:
-            fprintf(stderr,"select_comparator: float\n");
             return compare_floats;
 
         case FLOAT8OID:
-            fprintf(stderr,"select_comparator: double\n");
             return compare_doubles;
 
         case VARCHAROID:
-            fprintf(stderr,"select_comparator: varchar\n");
             return compare_varchars;
 
+        case TIMESTAMPOID:
+        case TIMESTAMPTZOID:
+            return compare_timestamps;
+
         default:
-            elog(ERROR, "select_comparator unknown data type %d", allData->type);
-            break;
+            elog(LOG, "select_comparator unknown data type %d", allData->type);
+            return compare_ints;
     }
 }
 
-
-// the original.
-int
-compare_original(const void *p, const void *q) {
-    Datum x = *(const Datum *) p;
-    Datum y = *(const Datum *) q;
-
-    if (x < y) {
-        return -1;
-    } else if (x > y) {
-        return 1;
-    }
-    return 0;
-}
-
-//TODO verify sign logic for int2 and int4.
+//TODO verify sign logic.
 int
 compare_ints(const void *p, const void *q) {
     long x = *(const long  *) p;
@@ -206,8 +192,8 @@ compare_ints(const void *p, const void *q) {
 
 int
 compare_floats(const void *p, const void *q) {
-    float x = *(const float *) p;
-    float y = *(const float *) q;
+    float x = DatumGetFloat4(*(const Datum*)p);
+    float y = DatumGetFloat4(*(const Datum*)q);
 
     if (x < y) {
         return -1;
@@ -219,8 +205,8 @@ compare_floats(const void *p, const void *q) {
 
 int
 compare_doubles(const void *p, const void *q) {
-    double x = *(const double *) p;
-    double y = *(const double *) q;
+    double x = DatumGetFloat8(*(const Datum*)p);
+    double y = DatumGetFloat8(*(const Datum*)q);
 
     if (x < y) {
         return -1;
@@ -234,7 +220,39 @@ int
 compare_varchars(const void *p, const void *q) {
     Datum x  = PointerGetDatum(PG_DETOAST_DATUM_COPY(*(const Datum *) p));
     Datum y  = PointerGetDatum(PG_DETOAST_DATUM_COPY(*(const Datum *) q));
-    int len = MIN(VARSIZE(x)-VARHDRSZ, VARSIZE(y)-VARHDRSZ);
+    int len_x = VARSIZE(x)-VARHDRSZ;
+    int len_y = VARSIZE(y)-VARHDRSZ;
+    int rval = strncmp(VARDATA(x), VARDATA(y), MIN(len_x, len_y));
 
-    return strncmp(VARDATA(x), VARDATA(y), len);
+    if(rval == 0) {  // matched
+        if(len_x < len_y) {
+            return -1;
+        } else if(len_x > len_y) {
+            return 1;
+        } else {
+            return 0;
+        }
+    } else {
+        return 0;
+    }
+}
+
+
+
+int
+compare_timestamps(const void *p, const void *q) {
+    Timestamp x  = DatumGetTimestamp(*(const Datum *) p);
+    Timestamp y  = DatumGetTimestamp(*(const Datum *) q);
+
+    //TODO: Delete me:
+    fprintf(stderr, "timestamps: x %lu  y %lu\n", x, y);
+
+    if(x < y) {
+        return -1;
+    } else if(x > y) {
+        return 1;
+    }else {
+        return 0;
+    }
+
 }
