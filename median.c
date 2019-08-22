@@ -124,12 +124,12 @@ median_finalfn(PG_FUNCTION_ARGS) {
 
     allData = (ALLDATA *) (PG_ARGISNULL(0) ? NULL : PG_GETARG_POINTER(0));
     if (allData == NULL) {
-        PG_RETURN_DATUM((Datum)NULL);
+        PG_RETURN_NULL();
     }
 
     // no data points.
     if (allData->count == 0) {
-        PG_RETURN_DATUM((Datum)NULL);
+        PG_RETURN_NULL();
     }
 
     qsort(allData->data, allData->count, sizeof(Datum), select_comparator());
