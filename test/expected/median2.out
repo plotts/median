@@ -1,0 +1,107 @@
+CREATE TABLE floatvals (val FLOAT, color TEXT);
+INSERT INTO floatvals (val, color) VALUES (2.34, 'a'), (2.22, 'b'), (2.11, 'c'), (2.44, 'd'), (2.55, 'e');
+CREATE TABLE doublevals (val FLOAT8, color TEXT);
+INSERT INTO doublevals (val, color) VALUES (2.34, 'a'), (2.22, 'b'), (2.11, 'c'), (2.44, 'd'), (2.55, 'e');
+CREATE TABLE sometextvals (name text, id integer);
+INSERT INTO sometextvals (name, id) VALUES ('marij', 1), ('chip', 2), ('manny', 3), ('bobby', 4), ('bob', 5);
+-- get median for floats - odd count.
+SELECT median(val) FROM floatvals;
+ median 
+--------
+   2.34
+(1 row)
+
+INSERT INTO floatvals VALUES (2.76, 'f');
+-- get median for floats - even count.
+SELECT median(val) FROM floatvals;
+ median 
+--------
+   2.34
+(1 row)
+
+-- check window function with floats
+SELECT val, median(val) OVER (ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM floatvals;
+ val  | median 
+------+--------
+ 2.34 |   2.34
+ 2.22 |   2.22
+ 2.11 |   2.22
+ 2.44 |   2.22
+ 2.55 |   2.44
+ 2.76 |   2.55
+(6 rows)
+
+-- get median for doubles
+SELECT median(val) FROM doublevals;
+ median 
+--------
+   2.34
+(1 row)
+
+INSERT INTO doublevals VALUES (2.76, 'f');
+-- get median for doubles - even count.
+SELECT median(val) FROM doublevals;
+ median 
+--------
+   2.34
+(1 row)
+
+-- check window function with doubles
+SELECT val, median(val) OVER (ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM doublevals;
+ val  | median 
+------+--------
+ 2.34 |   2.34
+ 2.22 |   2.22
+ 2.11 |   2.22
+ 2.44 |   2.22
+ 2.55 |   2.44
+ 2.76 |   2.55
+(6 rows)
+
+-- median for strings, odd num records.
+SELECT * FROM sometextvals ORDER BY name;
+ name  | id 
+-------+----
+ bob   |  5
+ bobby |  4
+ chip  |  2
+ manny |  3
+ marij |  1
+(5 rows)
+
+SELECT median(name) FROM sometextvals;
+ median 
+--------
+ chip
+(1 row)
+
+insert into sometextvals (name, id) VALUES ('butch', 6);
+SELECT * FROM sometextvals ORDER BY name;
+ name  | id 
+-------+----
+ bob   |  5
+ bobby |  4
+ butch |  6
+ chip  |  2
+ manny |  3
+ marij |  1
+(6 rows)
+
+SELECT median(name) FROM sometextvals;
+ median 
+--------
+ butch
+(1 row)
+
+-- windowing function for text:
+SELECT name, median(name) OVER (ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM sometextvals;
+ name  | median 
+-------+--------
+ marij | chip
+ chip  | chip
+ manny | chip
+ bobby | bob
+ bob   | butch
+ butch | butch
+(6 rows)
+

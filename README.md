@@ -10,13 +10,11 @@ Vanilla:
 ```sql
 SELECT id, temp, median(temp) FROM newtable;
 ```
-Or a windowing function like: 
+Or a simple windowing function like: 
 ```sql 
 SELECT id, temp, median(temp) OVER (ROWS BETWEEN 4 PRECEDING AND CURRENT ROW) FROM newtable;
 ```
 
 ## What's not working. 
 - Need to clean up and appropriately format the code.
-- Polymorphic types, including the pass-by-reference types.  Depending on platform, this probably includes DOUBLE and NUMBER. 
-- Parallelism.  need to learn more about this.  The idea of median seems like we need all the data from all partitions, sorted in order to select the median.  
-- Need more tests.
+- Parallelism.  need to learn more about this.
