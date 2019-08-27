@@ -75,6 +75,7 @@ SELECT median(name) FROM sometextvals;
  chip
 (1 row)
 
+-- median for strings, even num records. 
 insert into sometextvals (name, id) VALUES ('butch', 6);
 SELECT * FROM sometextvals ORDER BY name;
  name  | id 
@@ -94,14 +95,4 @@ SELECT median(name) FROM sometextvals;
 (1 row)
 
 -- windowing function for text:
-SELECT name, median(name) OVER (ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM sometextvals;
- name  | median 
--------+--------
- marij | chip
- chip  | chip
- manny | chip
- bobby | bob
- bob   | butch
- butch | butch
-(6 rows)
-
+--SELECT name, median(name) OVER (ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM sometextvals;

@@ -31,11 +31,10 @@ SELECT val, median(val) OVER (ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM dou
 SELECT * FROM sometextvals ORDER BY name;
 SELECT median(name) FROM sometextvals;
 
+-- median for strings, even num records. 
 insert into sometextvals (name, id) VALUES ('butch', 6);
 SELECT * FROM sometextvals ORDER BY name;
 SELECT median(name) FROM sometextvals;
 
 -- windowing function for text:
-SELECT name, median(name) OVER (ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM sometextvals;
-
-
+--SELECT name, median(name) OVER (ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM sometextvals;

@@ -8,6 +8,11 @@
 PG_MODULE_MAGIC;
 #endif
 
+typedef struct Element {
+    Datum   datum;
+    int    sequence;
+} ELEMENT;
+
 typedef struct AllData
 {
     Oid		type;
@@ -17,27 +22,31 @@ typedef struct AllData
 
     int     total_nodes;
     int     count;
-    Datum   *data;
-} ALLDATA;
+    int     sequence;
+    int     sorted_by;
+    ELEMENT   *data_items;
+} ALL_DATA;
 
-typedef struct AllData *ALLDATA_P;
-ALLDATA_P allData;
+typedef struct AllData *ALL_DATA_P;
+ALL_DATA_P all_data;
 
-int compare_original(const void *p, const void *q);
+#define DEBUG 1
+
+#define SORTED_BY_SEQUENCE 1
+#define SORTED_BY_DATUM  2
+#define UNSORTED 3
+
+#define NUM_NODES 100
+#define MIN(a,b) (((a)<(b))?(a):(b))
+
+typedef int (*comparator)(const void *p, const void *q);
+comparator select_comparator(void);
+
 int compare_ints(const void *p, const void *q);
-int compare_floats(const void *p, const void *q);
+int compare_ints_sequence_descending(const void *p, const void *q);
 int compare_doubles(const void *p, const void *q);
 int compare_varchars(const void *p, const void *q);
 int compare_timestamps(const void *p, const void *q);
-
-typedef int (*comparator)(const void *, const void *);
-comparator select_comparator(void);
-
-#define NUM_NODES 100
-
-// TODO: need to replace these - must be something in PG we can use.
-#define MIN(a,b) (((a)<(b))?(a):(b))
-#define MAX(a,b) (((a)>(b))?(a):(b))
 
 PG_FUNCTION_INFO_V1(median_transfn);
 
@@ -52,7 +61,6 @@ Datum
 median_transfn(PG_FUNCTION_ARGS)
 {
     MemoryContext agg_context;
-    Datum datum;
 
     if (!AggCheckCallContext(fcinfo, &agg_context))
     {
@@ -61,28 +69,29 @@ median_transfn(PG_FUNCTION_ARGS)
 
     MemoryContextSwitchTo(agg_context);
 
-    allData = (ALLDATA_P) (PG_ARGISNULL(0) ? NULL : PG_GETARG_POINTER(0));
-    if (allData == NULL)
+    all_data = (ALL_DATA_P) (PG_ARGISNULL(0) ? NULL : PG_GETARG_POINTER(0));
+    if (all_data == NULL)
     {
         // first time.
-        if ((allData = MemoryContextAllocZero(agg_context, sizeof(ALLDATA))) == NULL)
+        if ((all_data = MemoryContextAllocZero(agg_context, sizeof(ALL_DATA))) == NULL)
         {
-            elog(ERROR, "can\'t allocate allData struct");
+            elog(ERROR, "can\'t allocate all_data struct");
         }
 
-        if ((allData->data = MemoryContextAllocZero(agg_context, NUM_NODES * sizeof(Datum))) == NULL)
+        if ((all_data->data_items = (ELEMENT *) MemoryContextAllocZero(agg_context, NUM_NODES * sizeof(ELEMENT))) == NULL)
         {
-            elog(ERROR, "can\'t allocate allData->data struct");
+            elog(ERROR, "can\'t allocate all_data->data struct");
         }
 
-        allData->total_nodes = NUM_NODES;
-        allData->count = 0;
+        all_data->total_nodes = NUM_NODES;
+        all_data->count = 0;
+        all_data->sequence = 0;
 
-        // handle pass by value/pass by reference...
-        allData->type = get_fn_expr_argtype(fcinfo->flinfo, 1);
-        get_typlenbyvalalign(allData->type, &allData->type_len, &allData->type_by_val, &allData->type_align);
+        // find info for pass by value/pass by reference...
+        all_data->type = get_fn_expr_argtype(fcinfo->flinfo, 1);
+        get_typlenbyvalalign(all_data->type, &all_data->type_len, &all_data->type_by_val, &all_data->type_align);
 
-        if (!OidIsValid(allData->type))
+        if (!OidIsValid(all_data->type))
         {
             elog(ERROR, "could not determine data type of input");
         }
@@ -91,28 +100,75 @@ median_transfn(PG_FUNCTION_ARGS)
     // check here for a null datum.
     if (PG_ARGISNULL(1))
     {
-        PG_RETURN_POINTER(allData);
+        PG_RETURN_POINTER(all_data);
     }
 
-    datum = PG_GETARG_DATUM(1);
-    allData->data[allData->count] = datum;
-    allData->count++;
+    all_data->data_items[all_data->count].datum = PG_GETARG_DATUM(1);
+    all_data->data_items[all_data->count].sequence = all_data->sequence;
+    all_data->count++;
+    all_data->sequence++;
+    all_data->sorted_by = UNSORTED;
 
-    if (allData->count == allData->total_nodes)
+    if (all_data->count == all_data->total_nodes)
     {
-        allData->total_nodes = allData->count * 2;
-        allData->data = (Datum *) repalloc_huge(allData->data, allData->total_nodes * sizeof(Datum));
-        if(allData->data == NULL)
+        all_data->total_nodes = all_data->count * 2;
+        all_data->data_items = (ELEMENT *) repalloc_huge(all_data->data_items, all_data->total_nodes * sizeof(ELEMENT));
+        if(all_data->data_items == NULL)
         {
-            elog(ERROR, "repalloc_huge() failed for datum.");
+            elog(ERROR, "repalloc_huge() failed for data_items.");
         }
     }
 
-    PG_RETURN_POINTER(allData);
+    PG_RETURN_POINTER(all_data);
+}
+
+
+PG_FUNCTION_INFO_V1(median_invfn);
+/*
+ * Median inverse transition function.
+ *
+ * This function is called only when calculating a moving aggregate.
+ * When the oldest row goes out of the window, this function is called to remove
+ * the value from the calculation.
+ *
+ * This is done by re-sorting the ELEMENTs by sequence number, in descending
+ * order.  The oldest value is at the end of the array of ELEMENTS and
+ * we decrement the count of items in the array - the last ELEMENT
+ * is positioned to be overwritten by the next incoming value.
+ *
+ * Flag the array to indicate it has been sorted by the sequence number.
+ *
+ */
+Datum
+median_invfn(PG_FUNCTION_ARGS) {
+
+    MemoryContext agg_context;
+
+    if (!AggCheckCallContext(fcinfo, &agg_context))
+    {
+        elog(ERROR, "median_invfn called in non-aggregate context");
+    }
+
+    MemoryContextSwitchTo(agg_context);
+
+    all_data = (ALL_DATA_P) (PG_ARGISNULL(0) ? NULL : PG_GETARG_POINTER(0));
+    if (all_data == NULL)
+    {
+        elog(ERROR, "median_invfn: alldata is null");
+    }
+
+    if(all_data->sorted_by != SORTED_BY_SEQUENCE) {
+        qsort(all_data->data_items, all_data->count, sizeof(ELEMENT), compare_ints_sequence_descending);
+        all_data->sorted_by = SORTED_BY_SEQUENCE;
+    }
+
+    // decrement the count; preparing to overwrite the item that has the smallest sequence.
+    all_data->count--;
+
+    PG_RETURN_POINTER(all_data);
 }
 
 PG_FUNCTION_INFO_V1(median_finalfn);
-
 /*
  * Median final function.
  *
@@ -124,7 +180,7 @@ Datum
 median_finalfn(PG_FUNCTION_ARGS)
 {
     MemoryContext agg_context;
-    Datum median = 0;
+    Datum median;
 
     if (!AggCheckCallContext(fcinfo, &agg_context))
     {
@@ -133,29 +189,35 @@ median_finalfn(PG_FUNCTION_ARGS)
 
     MemoryContextSwitchTo(agg_context);
 
-    allData = (ALLDATA *) (PG_ARGISNULL(0) ? NULL : PG_GETARG_POINTER(0));
-    if (allData == NULL)
+    all_data = (ALL_DATA *) (PG_ARGISNULL(0) ? NULL : PG_GETARG_POINTER(0));
+    if (all_data == NULL)
     {
         PG_RETURN_NULL();
     }
 
-    // no data points.
-    if (allData->count == 0)
+    // no data points?  no median.
+    if (all_data->count == 0)
     {
         PG_RETURN_NULL();
     }
 
-    qsort(allData->data, allData->count, sizeof(Datum), select_comparator());
 
-    if (allData->count % 2 == 1)
+    if(all_data->sorted_by != SORTED_BY_DATUM)
+    {
+        qsort(all_data->data_items, all_data->count, sizeof(ELEMENT), select_comparator());
+        all_data->sorted_by = SORTED_BY_DATUM;
+    }
+
+
+    if (all_data->count % 2 == 1)
     {
         // Odd number of data items.
-        median = allData->data[allData->count / 2];
+        median = all_data->data_items[all_data->count / 2].datum;
     } else {
         // Even number of data items.
         // Return the lower of the pair.  Don't average, as this
         // will not be supported for some data types.
-        median = allData->data[allData->count / 2 -1];
+        median = all_data->data_items[all_data->count / 2 -1].datum;
     }
 
     PG_RETURN_DATUM(median);
@@ -165,7 +227,7 @@ median_finalfn(PG_FUNCTION_ARGS)
 comparator
 select_comparator(void)
 {
-    switch(allData->type)
+    switch(all_data->type)
     {
         case INT2OID:
         case INT4OID:
@@ -173,8 +235,6 @@ select_comparator(void)
             return compare_ints;
 
         case FLOAT4OID:
-            return compare_floats;
-
         case FLOAT8OID:
             return compare_doubles;
 
@@ -187,7 +247,7 @@ select_comparator(void)
             return compare_timestamps;
 
         default:
-            elog(ERROR, "select_comparator:  unknown data type %d", allData->type);
+            elog(ERROR, "select_comparator:  unknown data type %d", all_data->type);
             break;
     }
 }
@@ -195,9 +255,8 @@ select_comparator(void)
 int
 compare_ints(const void *p, const void *q)
 {
-    long x = *(const long  *) p;
-    long y = *(const long *) q;
-
+    long x = (*(const ELEMENT *) p).datum;
+    long y = (*(const ELEMENT *) q).datum;
     if (x < y)
     {
         return -1;
@@ -208,15 +267,17 @@ compare_ints(const void *p, const void *q)
 }
 
 int
-compare_floats(const void *p, const void *q)
+compare_ints_sequence_descending(const void *p, const void *q)
 {
-    float x = DatumGetFloat4(*(const Datum*)p);
-    float y = DatumGetFloat4(*(const Datum*)q);
+    long x = (*(const ELEMENT *) p).sequence;
+    long y = (*(const ELEMENT *) q).sequence;
 
-    if (x < y)
+    // Reversing this relational operator to get reverse sort.
+    if (x > y)
     {
         return -1;
-    } else if (x > y) {
+        // Reversing this relational operator, too.
+    } else if (x < y) {
         return 1;
     }
     return 0;
@@ -225,8 +286,8 @@ compare_floats(const void *p, const void *q)
 int
 compare_doubles(const void *p, const void *q)
 {
-    double x = DatumGetFloat8(*(const Datum *)p);
-    double y = DatumGetFloat8(*(const Datum *)q);
+    double x = DatumGetFloat8((*(const ELEMENT *)p).datum);
+    double y = DatumGetFloat8((*(const ELEMENT *)q).datum);
 
     if (x < y) {
         return -1;
@@ -239,12 +300,17 @@ compare_doubles(const void *p, const void *q)
 int
 compare_varchars(const void *p, const void *q)
 {
-    Datum x  = PointerGetDatum(PG_DETOAST_DATUM_COPY(*(const Datum *) p));
-    Datum y  = PointerGetDatum(PG_DETOAST_DATUM_COPY(*(const Datum *) q));
+    Datum x  = PointerGetDatum(PG_DETOAST_DATUM_COPY((*(const ELEMENT *) p).datum));
+    Datum y  = PointerGetDatum(PG_DETOAST_DATUM_COPY((*(const ELEMENT *) q).datum));
     int len_x = VARSIZE(x)-VARHDRSZ;
     int len_y = VARSIZE(y)-VARHDRSZ;
     int rval = strncmp(VARDATA(x), VARDATA(y), MIN(len_x, len_y));
 
+
+    // post process this a bit.
+    // bob == bobby if you only compare 3 characters.
+    // handle different length strings which start
+    // identically.
     if(rval == 0)
     {
         if(len_x < len_y)
@@ -263,8 +329,8 @@ compare_varchars(const void *p, const void *q)
 int
 compare_timestamps(const void *p, const void *q)
 {
-    Timestamp x  = DatumGetTimestamp(*(const Datum *) p);
-    Timestamp y  = DatumGetTimestamp(*(const Datum *) q);
+    Timestamp x  = DatumGetTimestamp((*(const ELEMENT *) p).datum);
+    Timestamp y  = DatumGetTimestamp((*(const ELEMENT *) q).datum);
 
     if(x < y)
     {
